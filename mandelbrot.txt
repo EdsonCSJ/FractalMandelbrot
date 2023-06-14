@@ -1,3 +1,4 @@
+//Primeira Versão sem paralelismo
 #include <SDL.h>
 
 const int windowWidth = 800;
