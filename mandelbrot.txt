@@ -1,0 +1,104 @@
+#include <SDL.h>
+
+const int windowWidth = 800;
+const int windowHeight = 600;
+const int maxIterations = 100;
+
+double minReal = -2.5;
+double maxReal = 1.0;
+double minImag = -1.5;
+double maxImag = 1.5;
+
+void zoomIn(double x, double y) {
+    double zoomFactor = 0.5;
+    double zoomWidth = (maxReal - minReal) * zoomFactor;
+    double zoomHeight = (maxImag - minImag) * zoomFactor;
+
+    minReal = x - zoomWidth / 2.0;
+    maxReal = x + zoomWidth / 2.0;
+    minImag = y - zoomHeight / 2.0;
+    maxImag = y + zoomHeight / 2.0;
+}
+
+void zoomOut() {
+    double zoomFactor = 2.0;
+    double zoomWidth = (maxReal - minReal) * zoomFactor;
+    double zoomHeight = (maxImag - minImag) * zoomFactor;
+
+    minReal -= zoomWidth / 2.0;
+    maxReal += zoomWidth / 2.0;
+    minImag -= zoomHeight / 2.0;
+    maxImag += zoomHeight / 2.0;
+}
+
+int main(int argc, char* argv[]) {
+    SDL_Init(SDL_INIT_VIDEO);
+
+    SDL_Window* window = SDL_CreateWindow("Fractal de Mandelbrot", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+        windowWidth, windowHeight, SDL_WINDOW_SHOWN);
+    SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STATIC,
+        windowWidth, windowHeight);
+
+    Uint32* pixels = new Uint32[windowWidth * windowHeight];
+
+    bool quit = false;
+    SDL_Event event;
+
+    while (!quit) {
+        while (SDL_PollEvent(&event) != 0) {
+            if (event.type == SDL_QUIT) {
+                quit = true;
+            }
+            else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    double x = (event.button.x - windowWidth / 2.0) * (maxReal - minReal) / windowWidth + (maxReal + minReal) / 2.0;
+                    double y = (event.button.y - windowHeight / 2.0) * (maxImag - minImag) / windowHeight + (maxImag + minImag) / 2.0;
+                    zoomIn(x, y);
+                }
+                else if (event.button.button == SDL_BUTTON_RIGHT) {
+                    zoomOut();
+                }
+            }
+        }
+
+        for (int y = 0; y < windowHeight; ++y) {
+            for (int x = 0; x < windowWidth; ++x) {
+                double real = (x - windowWidth / 2.0) * (maxReal - minReal) / windowWidth + (maxReal + minReal) / 2.0;
+                double imag = (y - windowHeight / 2.0) * (maxImag - minImag) / windowHeight + (maxImag + minImag) / 2.0;
+
+                double zReal = 0.0;
+                double zImag = 0.0;
+
+                int iteration = 0;
+                while (zReal * zReal + zImag * zImag <= 4.0 && iteration < maxIterations) {
+                    double nextZReal = zReal * zReal - zImag * zImag + real;
+                    double nextZImag = 2.0 * zReal * zImag + imag;
+                    zReal = nextZReal;
+                    zImag = nextZImag;
+                    ++iteration;
+                }
+
+                Uint8 r = iteration % 256;
+                Uint8 g = (iteration * iteration) % 256;
+                Uint8 b = (255 - iteration) % 256;
+                pixels[y * windowWidth + x] = (255 << 24) | (r << 16) | (g << 8) | b;
+            }
+        }
+
+        SDL_UpdateTexture(texture, NULL, pixels, windowWidth * sizeof(Uint32));
+        SDL_RenderClear(renderer);
+        SDL_RenderCopy(renderer, texture, NULL, NULL);
+        SDL_RenderPresent(renderer);
+    }
+
+    delete[] pixels;
+
+    SDL_DestroyTexture(texture);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+
+    SDL_Quit();
+
+    return 0;
+}

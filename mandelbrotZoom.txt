@@ -1,0 +1,168 @@
+#include <mpi.h>
+#include <SDL.h>
+#include <iostream>
+
+const int windowWidth = 800;
+const int windowHeight = 600;
+const int maxIterations = 1000;
+
+double minReal = -2.5;
+double maxReal = 1.0;
+double minImag = -1.5;
+double maxImag = 1.5;
+
+void zoomIn(double x, double y) {
+    double zoomFactor = 0.5;
+    double zoomWidth = (maxReal - minReal) * zoomFactor;
+    double zoomHeight = (maxImag - minImag) * zoomFactor;
+
+    minReal = x - zoomWidth / 2.0;
+    maxReal = x + zoomWidth / 2.0;
+    minImag = y - zoomHeight / 2.0;
+    maxImag = y + zoomHeight / 2.0;
+}
+
+void zoomOut() {
+    double zoomFactor = 2.0;
+    double zoomWidth = (maxReal - minReal) * zoomFactor;
+    double zoomHeight = (maxImag - minImag) * zoomFactor;
+
+    minReal -= zoomWidth / 2.0;
+    maxReal += zoomWidth / 2.0;
+    minImag -= zoomHeight / 2.0;
+    maxImag += zoomHeight / 2.0;
+}
+
+int calculatePixel(int x, int y) {
+    double real = (x - windowWidth / 2.0) * (maxReal - minReal) / windowWidth + (maxReal + minReal) / 2.0;
+    double imag = (y - windowHeight / 2.0) * (maxImag - minImag) / windowHeight + (maxImag + minImag) / 2.0;
+
+    double zReal = 0.0;
+    double zImag = 0.0;
+
+    int iteration = 0;
+    while (zReal * zReal + zImag * zImag <= 4.0 && iteration < maxIterations) {
+        double nextZReal = zReal * zReal - zImag * zImag + real;
+        double nextZImag = 2.0 * zReal * zImag + imag;
+        zReal = nextZReal;
+        zImag = nextZImag;
+        ++iteration;
+    }
+
+    return iteration;
+}
+
+void renderPixels(int startRow, int endRow, Uint32* pixels) {
+    for (int y = startRow; y < endRow; ++y) {
+        for (int x = 0; x < windowWidth; ++x) {
+            int iteration = calculatePixel(x, y);
+
+            Uint8 r = iteration % 256;
+            Uint8 g = (iteration * iteration) % 256;
+            Uint8 b = (255 - iteration) % 256;
+            pixels[(y - startRow) * windowWidth + x] = (255 << 24) | (r << 16) | (g << 8) | b;
+        }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    MPI_Init(&argc, &argv);
+
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    SDL_Texture* texture = nullptr;
+    Uint32* pixels = nullptr;
+
+    if (rank == 0) {
+        SDL_Init(SDL_INIT_VIDEO);
+        window = SDL_CreateWindow("Fractal de Mandelbrot", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+            windowWidth, windowHeight, SDL_WINDOW_SHOWN);
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+            windowWidth, windowHeight);
+        pixels = new Uint32[windowWidth * windowHeight];
+    }
+
+    bool quit = false;
+    SDL_Event event;
+
+    while (!quit) {
+
+        double startTime = MPI_Wtime();
+
+        while (SDL_PollEvent(&event) != 0) {
+            if (event.type == SDL_QUIT) {
+                quit = true;
+            }
+            else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    double x = (event.button.x - windowWidth / 2.0) * (maxReal - minReal) / windowWidth + (maxReal + minReal) / 2.0;
+                    double y = (event.button.y - windowHeight / 2.0) * (maxImag - minImag) / windowHeight + (maxImag + minImag) / 2.0;
+                    zoomIn(x, y);
+                }
+                else if (event.button.button == SDL_BUTTON_RIGHT) {
+                    zoomOut();
+                }
+            }
+        }
+
+        int rowsPerProcess = windowHeight / size;
+        int startRow = rank * rowsPerProcess;
+        int endRow = (rank + 1) * rowsPerProcess;
+        if (rank == size - 1) {
+            endRow = windowHeight;
+        }
+
+        int localHeight = endRow - startRow;
+        Uint32* localPixels = new Uint32[windowWidth * localHeight];
+
+        renderPixels(startRow, endRow, localPixels);
+
+        int* recvcounts = new int[size];
+        int* displs = new int[size];
+        for (int i = 0; i < size; ++i) {
+            recvcounts[i] = windowWidth * (endRow - startRow);
+            displs[i] = windowWidth * i * rowsPerProcess;
+        }
+
+        MPI_Gatherv(localPixels, windowWidth * localHeight, MPI_UINT32_T, pixels, recvcounts, displs, MPI_UINT32_T, 0, MPI_COMM_WORLD);
+
+        delete[] recvcounts;
+        delete[] displs;
+        delete[] localPixels;
+
+        if (rank == 0) {
+            SDL_UpdateTexture(texture, NULL, pixels, windowWidth * sizeof(Uint32));
+            SDL_RenderClear(renderer);
+            SDL_RenderCopy(renderer, texture, NULL, NULL);
+            SDL_RenderPresent(renderer);
+        }
+
+        MPI_Barrier(MPI_COMM_WORLD);
+
+        double endTime = MPI_Wtime();
+        double elapsedTime = endTime - startTime;
+
+        if (rank == 0) {
+            std::cout << "Tempo de renderizacao: " << elapsedTime << " segundos" << std::endl;
+        }
+    }
+
+    if (rank == 0) {
+        delete[] pixels;
+
+        SDL_DestroyTexture(texture);
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+
+        SDL_Quit();
+    }
+
+    MPI_Finalize();
+
+    return 0;
+}
