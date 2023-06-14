@@ -1,3 +1,4 @@
+//Versão não funcional, funções de zoom-in e zoom-out, não funcionam corretamente
 #include <mpi.h>
 #include <SDL.h>
 #include <iostream>
